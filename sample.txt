@@ -1,31 +1,123 @@
-# ===============================
-# H2 Database Configuration
-# ===============================
-spring.datasource.url=jdbc:h2:mem:nthwd;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
-spring.datasource.driverClassName=org.h2.Driver
-spring.datasource.username=sa
-spring.datasource.password=sa
+package com.barcap.data.workflow.controller;
 
-# ===============================
-# JPA / Hibernate
-# ===============================
-spring.jpa.hibernate.ddl-auto=update
-spring.jpa.open-in-view=false
-spring.jpa.properties.hibernate.format_sql=true
-spring.jpa.show-sql=true
+import com.barcap.data.workflow.service.CalendarService;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.http.MediaType;
+import org.springframework.test.web.servlet.MockMvc;
 
-# ===============================
-# H2 Console
-# ===============================
-spring.h2.console.enabled=true
-spring.h2.console.path=/h2-console
+import java.time.LocalDate;
 
-# ===============================
-# Server
-# ===============================
-server.port=8080
+import static org.hamcrest.Matchers.containsString;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
-# ===============================
-# Actuator (optional)
-# ===============================
-management.endpoints.web.exposure.include=health,info
+/**
+ * Assumptions from your screenshots:
+ * GET /calendar/{calendarId}/workingday/{n}?startdate=yyyy-MM-dd
+ * returns 200 with LocalDate (Jackson-serialized) or 400 on IllegalArgumentException, 500 otherwise.
+ */
+@WebMvcTest(CalendarController.class)
+@AutoConfigureMockMvc(addFilters = false) // if Spring Security is on the classpath
+class CalendarControllerTest {
+
+    @Autowired
+    private MockMvc mockMvc;
+
+    @MockBean
+    private CalendarService calendarService;
+
+    @Test
+    @DisplayName("200: returns date when valid calendarId, n and startdate are provided")
+    void getNthWorkingDay_withStartDate_ok() throws Exception {
+        String calendarId = "CAL_001";
+        int n = 5;
+        LocalDate start = LocalDate.of(2025, 8, 1);
+        LocalDate expected = LocalDate.of(2025, 8, 08);
+
+        when(calendarService.calculateNthWorkingDay(calendarId, start, n)).thenReturn(expected);
+
+        mockMvc.perform(get("/calendar/{calendarId}/workingday/{n}", calendarId, n)
+                        .param("startdate", start.toString())
+                        .accept(MediaType.APPLICATION_JSON))
+                .andExpect(status().isOk())
+                .andExpect(content().string(expected.toString()));
+
+        verify(calendarService).calculateNthWorkingDay(calendarId, start, n);
+    }
+
+    @Test
+    @DisplayName("200: uses today's date when startdate is absent")
+    void getNthWorkingDay_withoutStartDate_usesToday() throws Exception {
+        String calendarId = "CAL_002";
+        int n = 3;
+        LocalDate expected = LocalDate.of(2025, 8, 05);
+
+        when(calendarService.calculateNthWorkingDay(eq(calendarId), any(LocalDate.class), eq(n)))
+                .thenReturn(expected);
+
+        mockMvc.perform(get("/calendar/{calendarId}/workingday/{n}", calendarId, n))
+                .andExpect(status().isOk())
+                .andExpect(content().string(expected.toString()));
+
+        // Optional: capture and assert it used "today" (loose assertion to avoid flakiness)
+        ArgumentCaptor<LocalDate> captor = ArgumentCaptor.forClass(LocalDate.class);
+        verify(calendarService).calculateNthWorkingDay(eq(calendarId), captor.capture(), eq(n));
+        // assert that the controller passed a date very close to now
+        LocalDate passed = captor.getValue();
+        LocalDate now = LocalDate.now();
+        assert (passed.equals(now)) : "Expected startdate ~ today, but was " + passed;
+    }
+
+    @Test
+    @DisplayName("400: returns bad request when service throws IllegalArgumentException")
+    void getNthWorkingDay_badRequest_onIllegalArgument() throws Exception {
+        String calendarId = "CAL_BAD";
+        int n = -1; // invalid
+        String message = "Number of working days must be positive";
+
+        when(calendarService.calculateNthWorkingDay(eq(calendarId), any(LocalDate.class), eq(n)))
+                .thenThrow(new IllegalArgumentException(message));
+
+        mockMvc.perform(get("/calendar/{calendarId}/workingday/{n}", calendarId, n))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().string(containsString(message)));
+    }
+
+    @Test
+    @DisplayName("400: calendar not found is mapped to bad request (as controller catches IAE)")
+    void getNthWorkingDay_calendarNotFound_badRequest() throws Exception {
+        String calendarId = "NO_SUCH_CAL";
+        int n = 2;
+        String message = "Calendar not found with ID: " + calendarId;
+
+        when(calendarService.calculateNthWorkingDay(eq(calendarId), any(LocalDate.class), eq(n)))
+                .thenThrow(new IllegalArgumentException(message));
+
+        mockMvc.perform(get("/calendar/{calendarId}/workingday/{n}", calendarId, n))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().string(containsString(message)));
+    }
+
+    @Test
+    @DisplayName("500: unexpected errors bubble up as 500")
+    void getNthWorkingDay_internalServerError_onUnexpected() throws Exception {
+        String calendarId = "CAL_500";
+        int n = 4;
+
+        when(calendarService.calculateNthWorkingDay(eq(calendarId), any(LocalDate.class), eq(n)))
+                .thenThrow(new RuntimeException("DB down"));
+
+        mockMvc.perform(get("/calendar/{calendarId}/workingday/{n}", calendarId, n))
+                .andExpect(status().isInternalServerError())
+                .andExpect(content().string(containsString("Error calculating nth working day")));
+    }
+}
