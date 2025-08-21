@@ -1,52 +1,25 @@
-package com.example.workdays.service;
+package com.example.workdays.dto;
 
-import com.example.workdays.repository.HolidayRepository;
-import org.springframework.stereotype.Service;
-
-import java.time.DayOfWeek;
 import java.time.LocalDate;
-import java.time.YearMonth;
-import java.util.Set;
 
-@Service
-public class WorkingDayService {
+public class WorkingDayResponse {
+    private int year;
+    private int month; // 1-12
+    private int nth;
+    private LocalDate date;
+    private String isoDate; // convenience
 
-    private final HolidayRepository holidayRepository;
-
-    public WorkingDayService(HolidayRepository holidayRepository) {
-        this.holidayRepository = holidayRepository;
+    public WorkingDayResponse(int year, int month, int nth, LocalDate date) {
+        this.year = year;
+        this.month = month;
+        this.nth = nth;
+        this.date = date;
+        this.isoDate = date.toString();
     }
 
-    /**
-     * Returns the N-th working day (Mon–Fri) of a month.
-     * Holidays from DB (if any) are excluded as non-working too.
-     */
-    public LocalDate getNthWorkingDay(int year, int month, int n) {
-        if (n <= 0) {
-            throw new IllegalArgumentException("n must be >= 1");
-        }
-        YearMonth ym = YearMonth.of(year, month);
-        LocalDate start = ym.atDay(1);
-        LocalDate end = ym.atEndOfMonth();
-
-        Set<LocalDate> holidays = holidayRepository.findDatesBetween(start, end);
-
-        int count = 0;
-        LocalDate d = start;
-        while (!d.isAfter(end)) {
-            if (isWeekday(d) && !holidays.contains(d)) {
-                count++;
-                if (count == n) return d;
-            }
-            d = d.plusDays(1);
-        }
-        throw new IllegalArgumentException(
-            "Month " + ym + " has fewer than " + n + " working days."
-        );
-    }
-
-    private boolean isWeekday(LocalDate d) {
-        DayOfWeek dow = d.getDayOfWeek();
-        return dow != DayOfWeek.SATURDAY && dow != DayOfWeek.SUNDAY;
-    }
+    public int getYear() { return year; }
+    public int getMonth() { return month; }
+    public int getNth() { return nth; }
+    public LocalDate getDate() { return date; }
+    public String getIsoDate() { return isoDate; }
 }
