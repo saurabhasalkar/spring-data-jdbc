@@ -1,25 +1,64 @@
-package com.example.workdays.dto;
+package com.example.workdays.controller;
+
+import com.example.workdays.dto.WorkingDayResponse;
+import com.example.workdays.entity.Holiday;
+import com.example.workdays.repository.HolidayRepository;
+import com.example.workdays.service.WorkingDayService;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
 
-public class WorkingDayResponse {
-    private int year;
-    private int month; // 1-12
-    private int nth;
-    private LocalDate date;
-    private String isoDate; // convenience
+@RestController
+@RequestMapping("/api/calendar")
+public class CalendarController {
 
-    public WorkingDayResponse(int year, int month, int nth, LocalDate date) {
-        this.year = year;
-        this.month = month;
-        this.nth = nth;
-        this.date = date;
-        this.isoDate = date.toString();
+    private final WorkingDayService workingDayService;
+    private final HolidayRepository holidayRepository;
+
+    public CalendarController(WorkingDayService workingDayService, HolidayRepository holidayRepository) {
+        this.workingDayService = workingDayService;
+        this.holidayRepository = holidayRepository;
     }
 
-    public int getYear() { return year; }
-    public int getMonth() { return month; }
-    public int getNth() { return nth; }
-    public LocalDate getDate() { return date; }
-    public String getIsoDate() { return isoDate; }
+    /**
+     * Example: GET /api/calendar/2025/8/wd/5  -> 5th working day of Aug 2025
+     */
+    @GetMapping("/{year}/{month}/wd/{n}")
+    public ResponseEntity<?> nthWorkingDay(
+            @PathVariable @Min(1) @Max(9999) int year,
+            @PathVariable @Min(1) @Max(12) int month,
+            @PathVariable @Min(1) int n
+    ) {
+        try {
+            var date = workingDayService.getNthWorkingDay(year, month, n);
+            return ResponseEntity.ok(new WorkingDayResponse(year, month, n, date));
+        } catch (IllegalArgumentException ex) {
+            return ResponseEntity.badRequest().body(ex.getMessage());
+        }
+    }
+
+    /**
+     * Simple endpoints to manage holidays (optional).
+     * POST /api/calendar/holidays?date=2025-08-15&desc=Independence%20Day
+     */
+    @PostMapping("/holidays")
+    public ResponseEntity<?> addHoliday(@RequestParam("date") String isoDate,
+                                        @RequestParam(value = "desc", required = false) String desc) {
+        LocalDate d = LocalDate.parse(isoDate);
+        Holiday saved = holidayRepository.save(new Holiday(d, desc));
+        return ResponseEntity.ok(saved.getId());
+    }
+
+    @DeleteMapping("/holidays/{date}")
+    public ResponseEntity<?> deleteHoliday(@PathVariable String date) {
+        LocalDate d = LocalDate.parse(date);
+        holidayRepository.findAll().stream()
+                .filter(h -> h.getDate().equals(d))
+                .findFirst()
+                .ifPresent(holidayRepository::delete);
+        return ResponseEntity.noContent().build();
+    }
 }
