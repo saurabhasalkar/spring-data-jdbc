@@ -1,57 +1,14 @@
-package com.barcapi.data.workflow.service;
+@Test
+void calculateNthWorkingDay_throwsWhenCalendarNotFound() {
+    // Arrange
+    String missingId = "MISSING";
+    when(calendarRepository.findById(missingId)).thenReturn(Optional.empty());
 
-import com.barcapi.data.workflow.entity.Calendar;
-import com.barcapi.data.workflow.repository.CalendarRepository;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.Mockito;
-import org.mockito.junit.jupiter.MockitoExtension;
+    // Act + Assert  ✅ NOTE: pass the exception class as the first arg
+    IllegalArgumentException ex = assertThrows(
+            IllegalArgumentException.class,
+            () -> realService.calculateNthWorkingDay(missingId, LocalDate.of(2025, 8, 1), 3)
+    );
 
-import java.time.LocalDate;
-import java.util.List;
-import java.util.Optional;
-
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.mockito.Mockito.when;
-
-@ExtendWith(MockitoExtension.class)
-class CalendarServiceTest {
-
-    @Mock
-    private CalendarRepository calendarRepository;
-
-    // Create a real instance first, then wrap it with a spy inside the test method
-    @InjectMocks
-    private CalendarService realService = new CalendarService();
-
-    @Test
-    void calculateNthWorkingDay_skipsWeekends_and_Holidays() {
-        // Arrange
-        String calendarId = "CAL1";
-        Calendar cal = new Calendar();
-        cal.setCalendarId(calendarId);
-        cal.setCalendarName("Test");
-        cal.setWeekEnd1Day("SAT");
-        cal.setWeekEnd2Day("SUN");
-
-        when(calendarRepository.findById(calendarId)).thenReturn(Optional.of(cal));
-
-        // Spy the service to stub only the holiday supplier
-        CalendarService service = Mockito.spy(realService);
-        // Put a holiday on 2025-08-04 (Mon). Aug 2025: 1(Fri), 2(Sat), 3(Sun), 4(Holiday), 5(Tue)...
-        // So the 5th working day should be 2025-08-08 (Fri).
-        when(service.getHolidaysForCalendar(calendarId))
-                .thenReturn(List.of(LocalDate.of(2025, 8, 4)));
-
-        LocalDate anyDayInAug = LocalDate.of(2025, 8, 15); // method uses first day of month internally
-        int n = 5;
-
-        // Act
-        LocalDate result = service.calculateNthWorkingDay(calendarId, anyDayInAug, n);
-
-        // Assert
-        assertEquals(LocalDate.of(2025, 8, 8), result);
-    }
+    assertTrue(ex.getMessage().toLowerCase().contains("calendar not found"));
 }
