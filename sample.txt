@@ -1,41 +1,83 @@
-@RestController
-public class WorkFlowController {
+@Service
+public class WorkFlowInstanceService {
 
-    private final WorkFlowInstanceService workFlowInstanceService;
+    private final WorkflowExecutionRepository repo;
 
-    public WorkFlowController(WorkFlowInstanceService workFlowInstanceService) {
-        this.workFlowInstanceService = workFlowInstanceService;
+    public WorkFlowInstanceService(WorkflowExecutionRepository repo) {
+        this.repo = repo;
     }
 
-    @GetMapping("/running-workflows")
-    public ResponseEntity<?> getRunningWorkflows(
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size,
-            @RequestParam(defaultValue = "createdAt") String sortBy,
-            @RequestParam(defaultValue = "desc") String order,
-            @RequestParam(required = false) String workFlowId,
-            @RequestParam(required = false) String businessDate, // yyyy-MM-dd or blank
-            @RequestParam(required = false) String initiatedBy
+    public Page<WorkflowInstanceDto> getRunningWorkflows(
+            Pageable pageable,
+            String workflowId,
+            String businessDate,
+            String initiatedBy
     ) {
+        LocalDate businessDateFilter = parseBusinessDateOrNull(businessDate);
+        String wfId = emptyToNull(workflowId);
+        String initiatedByFilter = emptyToNull(initiatedBy);
+
+        Page<WorkflowExecution> page = repo.findRunningWorkflows(
+                pageable, wfId, businessDateFilter, initiatedByFilter);
+
+        return page.map(this::toDto);
+    }
+
+    private static LocalDate parseBusinessDateOrNull(String value) {
+        if (value == null) return null;
+        String t = value.trim();
+        if (t.isEmpty()) return null;
         try {
-            if (page < 0) page = 0;
-            if (size <= 0) size = 20;
-
-            Sort sort = "desc".equalsIgnoreCase(order)
-                    ? Sort.by(sortBy).descending()
-                    : Sort.by(sortBy).ascending();
-
-            Pageable pageable = PageRequest.of(page, size, sort);
-
-            Page<WorkflowInstanceDto> running =
-                    workFlowInstanceService.getRunningWorkflows(pageable, workFlowId, businessDate, initiatedBy);
-
-            return ResponseEntity.ok(RunningWorkflowsResponse.success(running));
-        } catch (IllegalArgumentException ex) {
-            return ResponseEntity.badRequest().body("Invalid request: " + ex.getMessage());
-        } catch (Exception ex) {
-            return ResponseEntity.internalServerError()
-                    .body("Failed to retrieve running workflows: " + ex.getMessage());
+            return LocalDate.parse(t, DateTimeFormatter.ISO_LOCAL_DATE);
+        } catch (DateTimeParseException ex) {
+            throw new IllegalArgumentException(
+                "businessDate must be yyyy-MM-dd. Received: " + value);
         }
+    }
+
+    private static String emptyToNull(String s) {
+        return (s == null || s.trim().isEmpty()) ? null : s.trim();
+    }
+
+    // ---- Entity -> DTO mapper (null-safe). Adjust getters to your model names. ----
+    private WorkflowInstanceDto toDto(WorkflowExecution wi) {
+        WorkflowDefinition def = wi.getWorkflowDefinition();
+        User initiated = wi.getInitiatedBy();
+
+        String workflowId = def != null ? def.getId() : null;
+        String workflowName = def != null ? def.getName() : null;
+        String initiatedBy = initiated != null ? initiated.getUserId() : null;
+        String initiatedByName = initiated != null ? initiated.getDisplayName() : null;
+
+        // Tasks-related fields (change to match your model)
+        List<WorkflowTask> tasks = wi.getTasks() != null ? wi.getTasks() : Collections.emptyList();
+        int totalTasks = tasks.size();
+        int completedTasks = (int) tasks.stream().filter(t -> t.getStatus() == TaskStatus.COMPLETED).count();
+        int pendingTasks = (int) tasks.stream().filter(t -> t.getStatus() == TaskStatus.PENDING).count();
+        String currentTask = tasks.stream()
+                .filter(t -> t.getStatus() == TaskStatus.IN_PROGRESS || t.getStatus() == TaskStatus.PENDING)
+                .map(WorkflowTask::getName)
+                .findFirst().orElse(null);
+        double progressPercentage = totalTasks == 0 ? 0d : (completedTasks * 100.0) / totalTasks;
+
+        Map<String, Object> params = wi.getParameters() != null ? wi.getParameters() : Collections.emptyMap();
+
+        WorkflowInstanceDto dto = new WorkflowInstanceDto();
+        dto.setInstanceId(wi.getId());
+        dto.setWorkflowId(workflowId);
+        dto.setWorkflowName(workflowName);
+        dto.setStatus(wi.getStatus() != null ? wi.getStatus().name() : null);
+        dto.setBusinessdate(wi.getBusinessDate());        // field in your DTO is `businessdate` (LocalDate)
+        dto.setStartedAt(wi.getStartedAt());              // LocalDateTime
+        dto.setInitiatedBy(initiatedBy);
+        dto.setInitiatedByName(initiatedByName);
+        dto.setComments(wi.getComments());
+        dto.setTotalTasks(totalTasks);
+        dto.setCompletedTasks(completedTasks);
+        dto.setPendingTasks(pendingTasks);
+        dto.setCurrentTask(currentTask);
+        dto.setProgresspercentage(progressPercentage);
+        dto.setParameters(params);
+        return dto;
     }
 }
