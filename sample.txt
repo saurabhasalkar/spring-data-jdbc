@@ -1,17 +1,20 @@
-public interface WorkflowExecutionRepository extends JpaRepository<WorkflowExecution, String> {
+public Page<WorkflowInstanceDto> getRunningWorkflows(
+        Pageable pageable,
+        String workflowId,
+        String businessDate,
+        String initiatedBy
+) {
+    LocalDate businessDateFilter = null;
+    if (businessDate != null && !businessDate.trim().isEmpty()) {
+        try {
+            businessDateFilter = LocalDate.parse(businessDate, DateTimeFormatter.ISO_LOCAL_DATE);
+        } catch (DateTimeParseException ex) {
+            throw new IllegalArgumentException("businessDate must be yyyy-MM-dd. Received: " + businessDate);
+        }
+    }
 
-    @Query("""
-        SELECT wi
-        FROM WorkflowExecution wi
-        WHERE wi.status = com.example.domain.WorkflowExecution.WorkflowStatus.RUNNING
-          AND (:workflowId IS NULL OR wi.workflowDefinition.id = :workflowId)
-          AND (:businessDate IS NULL OR wi.businessDate = :businessDate)
-          AND (:initiatedBy IS NULL OR wi.initiatedBy.userId = :initiatedBy)
-        """)
-    Page<WorkflowExecution> findRunningWorkflows(
-            Pageable pageable,
-            @Param("workflowId") String workflowId,
-            @Param("businessDate") LocalDate businessDate,
-            @Param("initiatedBy") String initiatedBy
-    );
+    String wfId = (workflowId == null || workflowId.trim().isEmpty()) ? null : workflowId.trim();
+    String initiatedByFilter = (initiatedBy == null || initiatedBy.trim().isEmpty()) ? null : initiatedBy.trim();
+
+    return workflowExecutionRepository.findRunningWorkflows(pageable, wfId, businessDateFilter, initiatedByFilter);
 }
