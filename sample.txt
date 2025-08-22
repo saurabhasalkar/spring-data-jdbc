@@ -1,23 +1,41 @@
-import java.time.LocalDate;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.Pageable;
-import org.springframework.data.jpa.repository.Query;
-import org.springframework.data.repository.query.Param;
+@RestController
+public class WorkFlowController {
 
-public interface WorkflowExecutionRepository {
+    private final WorkFlowInstanceService workFlowInstanceService;
 
-    @Query("""
-        SELECT new com.example.dto.WorkflowInstanceDto(wi)
-        FROM WorkflowExecution wi
-        WHERE wi.status = com.example.domain.WorkflowExecution.WorkflowStatus.RUNNING
-          AND (:workflowId IS NULL OR wi.workflowDefinition.id = :workflowId)
-          AND (:businessDate IS NULL OR wi.businessDate = :businessDate)
-          AND (:initiatedBy IS NULL OR wi.initiatedBy.userId = :initiatedBy)
-        """)
-    Page<WorkflowInstanceDto> findRunningWorkflows(
-            Pageable pageable,
-            @Param("workflowId") String workflowId,
-            @Param("businessDate") LocalDate businessDate,
-            @Param("initiatedBy") String initiatedBy
-    );
+    public WorkFlowController(WorkFlowInstanceService workFlowInstanceService) {
+        this.workFlowInstanceService = workFlowInstanceService;
+    }
+
+    @GetMapping("/running-workflows")
+    public ResponseEntity<?> getRunningWorkflows(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size,
+            @RequestParam(defaultValue = "createdAt") String sortBy,
+            @RequestParam(defaultValue = "desc") String order,
+            @RequestParam(required = false) String workFlowId,
+            @RequestParam(required = false) String businessDate, // yyyy-MM-dd or blank
+            @RequestParam(required = false) String initiatedBy
+    ) {
+        try {
+            if (page < 0) page = 0;
+            if (size <= 0) size = 20;
+
+            Sort sort = "desc".equalsIgnoreCase(order)
+                    ? Sort.by(sortBy).descending()
+                    : Sort.by(sortBy).ascending();
+
+            Pageable pageable = PageRequest.of(page, size, sort);
+
+            Page<WorkflowInstanceDto> running =
+                    workFlowInstanceService.getRunningWorkflows(pageable, workFlowId, businessDate, initiatedBy);
+
+            return ResponseEntity.ok(RunningWorkflowsResponse.success(running));
+        } catch (IllegalArgumentException ex) {
+            return ResponseEntity.badRequest().body("Invalid request: " + ex.getMessage());
+        } catch (Exception ex) {
+            return ResponseEntity.internalServerError()
+                    .body("Failed to retrieve running workflows: " + ex.getMessage());
+        }
+    }
 }
