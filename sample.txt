@@ -1,83 +1,17 @@
-@Service
-public class WorkFlowInstanceService {
+public interface WorkflowExecutionRepository extends JpaRepository<WorkflowExecution, String> {
 
-    private final WorkflowExecutionRepository repo;
-
-    public WorkFlowInstanceService(WorkflowExecutionRepository repo) {
-        this.repo = repo;
-    }
-
-    public Page<WorkflowInstanceDto> getRunningWorkflows(
+    @Query("""
+        SELECT wi
+        FROM WorkflowExecution wi
+        WHERE wi.status = com.example.domain.WorkflowExecution.WorkflowStatus.RUNNING
+          AND (:workflowId IS NULL OR wi.workflowDefinition.id = :workflowId)
+          AND (:businessDate IS NULL OR wi.businessDate = :businessDate)
+          AND (:initiatedBy IS NULL OR wi.initiatedBy.userId = :initiatedBy)
+        """)
+    Page<WorkflowExecution> findRunningWorkflows(
             Pageable pageable,
-            String workflowId,
-            String businessDate,
-            String initiatedBy
-    ) {
-        LocalDate businessDateFilter = parseBusinessDateOrNull(businessDate);
-        String wfId = emptyToNull(workflowId);
-        String initiatedByFilter = emptyToNull(initiatedBy);
-
-        Page<WorkflowExecution> page = repo.findRunningWorkflows(
-                pageable, wfId, businessDateFilter, initiatedByFilter);
-
-        return page.map(this::toDto);
-    }
-
-    private static LocalDate parseBusinessDateOrNull(String value) {
-        if (value == null) return null;
-        String t = value.trim();
-        if (t.isEmpty()) return null;
-        try {
-            return LocalDate.parse(t, DateTimeFormatter.ISO_LOCAL_DATE);
-        } catch (DateTimeParseException ex) {
-            throw new IllegalArgumentException(
-                "businessDate must be yyyy-MM-dd. Received: " + value);
-        }
-    }
-
-    private static String emptyToNull(String s) {
-        return (s == null || s.trim().isEmpty()) ? null : s.trim();
-    }
-
-    // ---- Entity -> DTO mapper (null-safe). Adjust getters to your model names. ----
-    private WorkflowInstanceDto toDto(WorkflowExecution wi) {
-        WorkflowDefinition def = wi.getWorkflowDefinition();
-        User initiated = wi.getInitiatedBy();
-
-        String workflowId = def != null ? def.getId() : null;
-        String workflowName = def != null ? def.getName() : null;
-        String initiatedBy = initiated != null ? initiated.getUserId() : null;
-        String initiatedByName = initiated != null ? initiated.getDisplayName() : null;
-
-        // Tasks-related fields (change to match your model)
-        List<WorkflowTask> tasks = wi.getTasks() != null ? wi.getTasks() : Collections.emptyList();
-        int totalTasks = tasks.size();
-        int completedTasks = (int) tasks.stream().filter(t -> t.getStatus() == TaskStatus.COMPLETED).count();
-        int pendingTasks = (int) tasks.stream().filter(t -> t.getStatus() == TaskStatus.PENDING).count();
-        String currentTask = tasks.stream()
-                .filter(t -> t.getStatus() == TaskStatus.IN_PROGRESS || t.getStatus() == TaskStatus.PENDING)
-                .map(WorkflowTask::getName)
-                .findFirst().orElse(null);
-        double progressPercentage = totalTasks == 0 ? 0d : (completedTasks * 100.0) / totalTasks;
-
-        Map<String, Object> params = wi.getParameters() != null ? wi.getParameters() : Collections.emptyMap();
-
-        WorkflowInstanceDto dto = new WorkflowInstanceDto();
-        dto.setInstanceId(wi.getId());
-        dto.setWorkflowId(workflowId);
-        dto.setWorkflowName(workflowName);
-        dto.setStatus(wi.getStatus() != null ? wi.getStatus().name() : null);
-        dto.setBusinessdate(wi.getBusinessDate());        // field in your DTO is `businessdate` (LocalDate)
-        dto.setStartedAt(wi.getStartedAt());              // LocalDateTime
-        dto.setInitiatedBy(initiatedBy);
-        dto.setInitiatedByName(initiatedByName);
-        dto.setComments(wi.getComments());
-        dto.setTotalTasks(totalTasks);
-        dto.setCompletedTasks(completedTasks);
-        dto.setPendingTasks(pendingTasks);
-        dto.setCurrentTask(currentTask);
-        dto.setProgresspercentage(progressPercentage);
-        dto.setParameters(params);
-        return dto;
-    }
+            @Param("workflowId") String workflowId,
+            @Param("businessDate") LocalDate businessDate,
+            @Param("initiatedBy") String initiatedBy
+    );
 }
