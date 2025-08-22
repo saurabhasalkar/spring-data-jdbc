@@ -1,14 +1,53 @@
-@Test
-void calculateNthWorkingDay_throwsWhenCalendarNotFound() {
-    // Arrange
-    String missingId = "MISSING";
-    when(calendarRepository.findById(missingId)).thenReturn(Optional.empty());
+// imports
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
 
-    // Act + Assert  ✅ NOTE: pass the exception class as the first arg
-    IllegalArgumentException ex = assertThrows(
-            IllegalArgumentException.class,
-            () -> realService.calculateNthWorkingDay(missingId, LocalDate.of(2025, 8, 1), 3)
-    );
+@RestController
+public class WorkFlowController {
 
-    assertTrue(ex.getMessage().toLowerCase().contains("calendar not found"));
+    private final WorkFlowInstanceService workFlowInstanceService;
+
+    public WorkFlowController(WorkFlowInstanceService workFlowInstanceService) {
+        this.workFlowInstanceService = workFlowInstanceService;
+    }
+
+    @GetMapping("/running-workflows")
+    public ResponseEntity<?> getRunningWorkflows(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size,
+            @RequestParam(defaultValue = "createdAt") String sortBy,
+            @RequestParam(defaultValue = "desc") String order,
+            @RequestParam(required = false) String workFlowId,
+            @RequestParam(required = false) String businessDate, // yyyy-MM-dd or blank
+            @RequestParam(required = false) String initiatedBy
+    ) {
+        try {
+            // normalize paging/sort
+            if (page < 0) page = 0;
+            if (size <= 0) size = 20;
+
+            Sort sort = "desc".equalsIgnoreCase(order)
+                    ? Sort.by(sortBy).descending()
+                    : Sort.by(sortBy).ascending();
+
+            Pageable pageable = PageRequest.of(page, size, sort);
+
+            Page<WorkflowInstanceDto> running =
+                    workFlowInstanceService.getRunningWorkflows(pageable, workFlowId, businessDate, initiatedBy);
+
+            return ResponseEntity.ok(RunningWorkflowsResponse.success(running));
+        } catch (IllegalArgumentException ex) { // e.g., bad date format
+            return ResponseEntity.badRequest()
+                    .body("Invalid request: " + ex.getMessage());
+        } catch (Exception ex) {
+            return ResponseEntity.internalServerError()
+                    .body("Failed to retrieve running workflows: " + ex.getMessage());
+        }
+    }
 }
