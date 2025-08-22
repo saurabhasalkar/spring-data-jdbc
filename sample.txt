@@ -1,53 +1,23 @@
-// imports
 import java.time.LocalDate;
-import java.time.format.DateTimeFormatter;
-import java.time.format.DateTimeParseException;
-
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
-import org.springframework.stereotype.Service;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
-@Service
-public class WorkFlowInstanceService {
+public interface WorkflowExecutionRepository {
 
-    private final WorkflowExecutionRepository workflowExecutionRepository;
-
-    public WorkFlowInstanceService(WorkflowExecutionRepository workflowExecutionRepository) {
-        this.workflowExecutionRepository = workflowExecutionRepository;
-    }
-
-    public Page<WorkflowInstanceDto> getRunningWorkflows(
+    @Query("""
+        SELECT new com.example.dto.WorkflowInstanceDto(wi)
+        FROM WorkflowExecution wi
+        WHERE wi.status = com.example.domain.WorkflowExecution.WorkflowStatus.RUNNING
+          AND (:workflowId IS NULL OR wi.workflowDefinition.id = :workflowId)
+          AND (:businessDate IS NULL OR wi.businessDate = :businessDate)
+          AND (:initiatedBy IS NULL OR wi.initiatedBy.userId = :initiatedBy)
+        """)
+    Page<WorkflowInstanceDto> findRunningWorkflows(
             Pageable pageable,
-            String workflowId,
-            String businessDate,   // may be null or ""
-            String initiatedBy     // may be null or ""
-    ) {
-        LocalDate businessDateFilter = parseBusinessDateOrNull(businessDate);
-        String initiatedByFilter = emptyToNull(initiatedBy);
-
-        return workflowExecutionRepository.findRunningWorkflows(
-                pageable,
-                emptyToNull(workflowId),
-                businessDateFilter,
-                initiatedByFilter
-        );
-    }
-
-    private static LocalDate parseBusinessDateOrNull(String value) {
-        if (value == null) return null;
-        String trimmed = value.trim();
-        if (trimmed.isEmpty()) return null;
-
-        try {
-            // expects ISO yyyy-MM-dd (e.g., 2025-08-22)
-            return LocalDate.parse(trimmed, DateTimeFormatter.ISO_LOCAL_DATE);
-        } catch (DateTimeParseException ex) {
-            throw new IllegalArgumentException(
-                "businessDate must be in yyyy-MM-dd format. Received: " + value);
-        }
-    }
-
-    private static String emptyToNull(String s) {
-        return (s == null || s.trim().isEmpty()) ? null : s.trim();
-    }
+            @Param("workflowId") String workflowId,
+            @Param("businessDate") LocalDate businessDate,
+            @Param("initiatedBy") String initiatedBy
+    );
 }
