@@ -5,6 +5,7 @@ public Page<WorkflowInstanceDto> getRunningWorkflows(
         String initiatedBy
 ) {
     LocalDate businessDateFilter = null;
+
     if (businessDate != null && !businessDate.trim().isEmpty()) {
         try {
             businessDateFilter = LocalDate.parse(businessDate, DateTimeFormatter.ISO_LOCAL_DATE);
