@@ -1,21 +1,70 @@
-public Page<WorkflowInstanceDto> getRunningWorkflows(
-        Pageable pageable,
-        String workflowId,
-        String businessDate,
-        String initiatedBy
-) {
-    LocalDate businessDateFilter = null;
-
-    if (businessDate != null && !businessDate.trim().isEmpty()) {
-        try {
-            businessDateFilter = LocalDate.parse(businessDate, DateTimeFormatter.ISO_LOCAL_DATE);
-        } catch (DateTimeParseException ex) {
-            throw new IllegalArgumentException("businessDate must be yyyy-MM-dd. Received: " + businessDate);
+public String triggerTasks(String workflowId) {
+        // 1. Validate workflow exists and get workflow instance
+        List<WorkflowExecution> executions = workflowExecutionRepository.findByWorkflowId(workflowId);
+        if (executions.isEmpty()) {
+            return "Workflow not found: " + workflowId;
         }
+        
+        WorkflowExecution execution = executions.get(0);
+        
+        // 2. Check workflow status - must be RUNNING
+        if (!"RUNNING".equals(execution.getStatus())) {
+            return "Workflow is not in RUNNING state. Current status: " + execution.getStatus();
+        }
+        
+        // 3. Get workflow tasks template
+        List<WorkflowTasks> workflowTasks = workflowTasksRepository.findByWorkflowId(workflowId);
+        if (workflowTasks.isEmpty()) {
+            return "No tasks found for workflow: " + workflowId;
+        }
+        
+        WorkflowTasks firstTask = workflowTasks.stream().findFirst().get();
+        
+        // 4. Check if task instance already exists
+        List<WorkflowExecutionTask> existingTasks = workflowExecutionTaskRepository
+                .findByWorkflowInstanceId(execution.getWorkflowInstanceId());
+        
+        WorkflowExecutionTask existingTask = existingTasks.stream()
+                .filter(t -> firstTask.getTaskId().equals(t.getTaskId()))
+                .findFirst().orElse(null);
+        
+        if (existingTask != null) {
+            // 5. Check task status - must be PENDING or NOT_STARTED
+            if (!"PENDING".equals(existingTask.getStatus()) && !"NOT_STARTED".equals(existingTask.getStatus())) {
+                return "Task cannot be triggered. Current status: " + existingTask.getStatus();
+            }
+            
+            // 6. Check dependencies
+            List<WorkflowTaskDependencies> dependencies = workflowTaskDependenciesRepository
+                    .findByWorkflowIdAndTaskId(workflowId, firstTask.getTaskId());
+            
+            for (WorkflowTaskDependencies dependency : dependencies) {
+                WorkflowExecutionTask prerequisiteTask = existingTasks.stream()
+                        .filter(t -> dependency.getPrerequisiteTaskId().equals(t.getTaskId()))
+                        .findFirst().orElse(null);
+                
+                if (prerequisiteTask == null || !"COMPLETED".equals(prerequisiteTask.getStatus())) {
+                    return "Prerequisite task not completed: " + dependency.getPrerequisiteTaskId();
+                }
+            }
+            
+            // 7. Update existing task to PENDING
+            existingTask.setStatus("PENDING");
+            existingTask.setExecutionStartDate(LocalDate.now());
+            workflowExecutionTaskRepository.save(existingTask);
+            
+            // 8. Send notification
+            Notification notification = new Notification();
+            notification.setAssignedUserId(firstTask.getRoleId());
+            notification.setMessage("Task " + firstTask.getTaskName() + " has been triggered");
+            notification.setNotificationType(NotificationType.START);
+            notification.setWorkflowInstanceId(execution.getWorkflowInstanceId());
+            notification.setCreatedBy("system");
+            notification.setReadFlag(ReadFlag.UNREAD);
+            notificationRepository.save(notification);
+            
+            return "Task triggered successfully for workflow: " + workflowId;
+        }
+        
+        return "Task instance not found for workflow: " + workflowId;
     }
-
-    String wfId = (workflowId == null || workflowId.trim().isEmpty()) ? null : workflowId.trim();
-    String initiatedByFilter = (initiatedBy == null || initiatedBy.trim().isEmpty()) ? null : initiatedBy.trim();
-
-    return workflowExecutionRepository.findRunningWorkflows(pageable, wfId, businessDateFilter, initiatedByFilter);
-}
