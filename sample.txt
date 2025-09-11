@@ -1,70 +1,42 @@
-public String triggerTasks(String workflowId) {
+public String triggerTasks(String workflowInstanceId) {
         // 1. Validate workflow exists and get workflow instance
-        List<WorkflowExecution> executions = workflowExecutionRepository.findByWorkflowId(workflowId);
-        if (executions.isEmpty()) {
-            return "Workflow not found: " + workflowId;
+        WorkflowExecution execution = workflowExecutionRepository.findByWorkflowInstanceId(workflowInstanceId);
+        if (execution == null) {
+            return "Workflow not found: " + workflowInstanceId;
         }
-        
-        WorkflowExecution execution = executions.get(0);
-        
-        // 2. Check workflow status - must be RUNNING
-        if (!"RUNNING".equals(execution.getStatus())) {
-            return "Workflow is not in RUNNING state. Current status: " + execution.getStatus();
-        }
-        
-        // 3. Get workflow tasks template
-        List<WorkflowTasks> workflowTasks = workflowTasksRepository.findByWorkflowId(workflowId);
+
+        // 2. Get workflow tasks
+        List<WorkflowExecutionTask> workflowTasks = workflowExecutionTaskRepository.findByWorkflowInstanceId(execution.getWorkflowInstanceId());
         if (workflowTasks.isEmpty()) {
-            return "No tasks found for workflow: " + workflowId;
+            return "No tasks found for workflow: " + workflowInstanceId;
         }
         
-        WorkflowTasks firstTask = workflowTasks.stream().findFirst().get();
-        
-        // 4. Check if task instance already exists
-        List<WorkflowExecutionTask> existingTasks = workflowExecutionTaskRepository
-                .findByWorkflowInstanceId(execution.getWorkflowInstanceId());
-        
-        WorkflowExecutionTask existingTask = existingTasks.stream()
-                .filter(t -> firstTask.getTaskId().equals(t.getTaskId()))
-                .findFirst().orElse(null);
-        
-        if (existingTask != null) {
-            // 5. Check task status - must be PENDING or NOT_STARTED
-            if (!"PENDING".equals(existingTask.getStatus()) && !"NOT_STARTED".equals(existingTask.getStatus())) {
-                return "Task cannot be triggered. Current status: " + existingTask.getStatus();
-            }
-            
-            // 6. Check dependencies
-            List<WorkflowTaskDependencies> dependencies = workflowTaskDependenciesRepository
-                    .findByWorkflowIdAndTaskId(workflowId, firstTask.getTaskId());
-            
-            for (WorkflowTaskDependencies dependency : dependencies) {
-                WorkflowExecutionTask prerequisiteTask = existingTasks.stream()
-                        .filter(t -> dependency.getPrerequisiteTaskId().equals(t.getTaskId()))
-                        .findFirst().orElse(null);
-                
-                if (prerequisiteTask == null || !"COMPLETED".equals(prerequisiteTask.getStatus())) {
-                    return "Prerequisite task not completed: " + dependency.getPrerequisiteTaskId();
-                }
-            }
-            
-            // 7. Update existing task to PENDING
-            existingTask.setStatus("PENDING");
-            existingTask.setExecutionStartDate(LocalDate.now());
-            workflowExecutionTaskRepository.save(existingTask);
-            
-            // 8. Send notification
-            Notification notification = new Notification();
-            notification.setAssignedUserId(firstTask.getRoleId());
-            notification.setMessage("Task " + firstTask.getTaskName() + " has been triggered");
-            notification.setNotificationType(NotificationType.START);
-            notification.setWorkflowInstanceId(execution.getWorkflowInstanceId());
-            notification.setCreatedBy("system");
-            notification.setReadFlag(ReadFlag.UNREAD);
-            notificationRepository.save(notification);
-            
-            return "Task triggered successfully for workflow: " + workflowId;
-        }
-        
-        return "Task instance not found for workflow: " + workflowId;
+        // 3. Find task with no dependencies and update status
+        WorkflowExecutionTask firstTask = workflowTasks.stream()
+                .filter(task -> {
+                    List<WorkflowTaskDependencies> dependencies = workflowTaskDependenciesRepository
+                            .findByWorkflowIdAndTaskId(execution.getWorkflowId(), task.getTaskId());
+                    return dependencies.isEmpty();
+                })
+                .findFirst()
+                .orElse(workflowTasks.get(0));
+
+        // 4. Update task status to PENDING
+        firstTask.setStatus(WorkflowExecutionTask.TaskStatus.PENDING.toString());
+        firstTask.setExecutionStartDate(LocalDate.now());
+        WorkflowExecutionTask updatedTask = workflowExecutionTaskRepository.save(firstTask);
+
+        // 5. Send notification
+        Notification notification = new Notification();
+        notification.setAssignedUserId("user123");
+        notification.setMessage("Task " + updatedTask.getName() + " has been triggered");
+        notification.setNotificationType(NotificationType.START);
+        notification.setWorkflowInstanceId(execution.getWorkflowInstanceId());
+        notification.setCreatedBy("system");
+        notification.setReadFlag(ReadFlag.UNREAD);
+        notificationRepository.save(notification);
+
+        return "Task triggered successfully for workflow: " + workflowInstanceId;
     }
+
+-service
