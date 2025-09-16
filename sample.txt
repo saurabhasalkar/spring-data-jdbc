@@ -1,42 +1,23 @@
-public String triggerTasks(String workflowInstanceId) {
-        // 1. Validate workflow exists and get workflow instance
+public WorkflowInstanceDto getAllTasksWithInstanceDto(String workflowInstanceId) {
         WorkflowExecution execution = workflowExecutionRepository.findByWorkflowInstanceId(workflowInstanceId);
         if (execution == null) {
-            return "Workflow not found: " + workflowInstanceId;
-        }
-
-        // 2. Get workflow tasks
-        List<WorkflowExecutionTask> workflowTasks = workflowExecutionTaskRepository.findByWorkflowInstanceId(execution.getWorkflowInstanceId());
-        if (workflowTasks.isEmpty()) {
-            return "No tasks found for workflow: " + workflowInstanceId;
+            return null;
         }
         
-        // 3. Find task with no dependencies and update status
-        WorkflowExecutionTask firstTask = workflowTasks.stream()
-                .filter(task -> {
-                    List<WorkflowTaskDependencies> dependencies = workflowTaskDependenciesRepository
-                            .findByWorkflowIdAndTaskId(execution.getWorkflowId(), task.getTaskId());
-                    return dependencies.isEmpty();
-                })
-                .findFirst()
-                .orElse(workflowTasks.get(0));
+        WorkflowDefinition definition = workflowDefinitionRepository.findById(execution.getWorkflowId()).orElse(null);
+        List<WorkflowExecutionTask> tasks = workflowExecutionTaskRepository.findByWorkflowInstanceId(execution.getWorkflowInstanceId());
+        
+        WorkflowInstanceDto dto = mapToDto(execution, tasks, definition);
+        Map<String, List<String>> currentTaskPrerequisiteMap = new HashMap<>();
 
-        // 4. Update task status to PENDING
-        firstTask.setStatus(WorkflowExecutionTask.TaskStatus.PENDING.toString());
-        firstTask.setExecutionStartDate(LocalDate.now());
-        WorkflowExecutionTask updatedTask = workflowExecutionTaskRepository.save(firstTask);
+        tasks.forEach(task -> {
+            List<String> prereqs = workflowTaskDependenciesRepository.findPrerequisiteTasks(execution.getWorkflowId(), task.getTaskId())
+                    .stream()
+                    .map(WorkflowTaskDependencies::getPrerequisiteTaskId)
+                    .collect(Collectors.toList());
+            currentTaskPrerequisiteMap.put(task.getTaskId(), prereqs);
+        });
 
-        // 5. Send notification
-        Notification notification = new Notification();
-        notification.setAssignedUserId("user123");
-        notification.setMessage("Task " + updatedTask.getName() + " has been triggered");
-        notification.setNotificationType(NotificationType.START);
-        notification.setWorkflowInstanceId(execution.getWorkflowInstanceId());
-        notification.setCreatedBy("system");
-        notification.setReadFlag(ReadFlag.UNREAD);
-        notificationRepository.save(notification);
-
-        return "Task triggered successfully for workflow: " + workflowInstanceId;
+        dto.setCurrentTaskPrerequisiteMap(currentTaskPrerequisiteMap);
+        return dto;
     }
-
--service
